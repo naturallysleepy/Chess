@@ -1,0 +1,19 @@
+[Event "How to force en passant checkmate!: 2) b/g and c/f pawn, QRN"]
+[Date "2022.07.01"]
+[Result "*"]
+[Variant "Standard"]
+[ECO "?"]
+[Opening "?"]
+[StudyName "How to force en passant checkmate!"]
+[ChapterName "2) b/g and c/f pawn, QRN"]
+[ChapterURL "https://lichess.org/study/zyUzjI7s/ihUVh4j3"]
+[Annotator "https://lichess.org/@/ExtremelyBigBrain"]
+[FEN "k7/1p6/8/8/8/8/2P5/3QK1NR w - - 17 37"]
+[SetUp "1"]
+[UTCDate "2022.07.01"]
+[UTCTime "16:23:23"]
+
+{ [%csl Yb7,Yc2][%cal Gd1b6] }
+37. Qd8+ Ka7 38. Qa5+ Kb8 39. Qb6 Kc8 40. Rh7 Kb8 41. Kd2 Kc8 42. Kc3 Kb8 43. Kb4 Kc8 44. c4 Kb8 45. c5 Kc8 46. Nf3 Kb8 47. Ne5 Kc8 48. Nc4 Kb8 49. Qc7+ Ka7 50. Rh8 Ka6 51. Nb6 Ka7 52. Rb8 Ka6 53. Qf4 Ka7 54. Nc8+ Ka6 55. Qc4+ b5 56. cxb6# *
+
+
