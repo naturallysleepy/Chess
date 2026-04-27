@@ -28,8 +28,8 @@ class GameState:
             'black': False
         }
         self.is_end: bool = False
-        self.end_state: str = None
-        self.winner: str = None
+        self.end_state: str | None = None
+        self.winner: str | None = None
         self.move_history: list[dict[str, Move]] = []
         self.position_history: dict[int, str] = {}
         self.position_count: dict[str, int] = {}
@@ -97,7 +97,7 @@ class GameState:
         fen = ' '.join(fen_fields)
         return fen
             
-    def generate_pgn(self, start_move: int = None, end_move: int = None) -> str:
+    def generate_pgn(self, start_move: int | None = None, end_move: int | None = None) -> str:
         pgn_string = ''
         error = 0 if 'black' in self.move_history[-1] else 1
 
@@ -242,7 +242,7 @@ class GameState:
             
         return self
       
-    def undo(self, dest_move: int = None, colour: str = None):
+    def undo(self, dest_move: int | None = None, colour: str | None = None):
         is_restart = dest_move == 0
         if dest_move is None:
             dest_move = self.fullmoves - 1

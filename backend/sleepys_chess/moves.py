@@ -5,11 +5,11 @@ class Move:
         self.origin: str = origin
         self.destination: str = destination
         self.piece: Piece = piece
-        self.special: str = None
-        self.promote: str = None
+        self.special: str | None = None
+        self.promote: str | None = None
         self.is_capture: bool = False
         self.check_str: str = ''
-        self.disambiguation: str = None
+        self.disambiguation: str | None = None
     def __repr__(self):
         return f"Move('{self.origin}', '{self.destination}', '{self.piece}', special: {self.special}, promote: {self.promote})"
     def __str__(self):

@@ -12,7 +12,7 @@ class Board:
         self.squares: dict[str, Piece] = {}
         self.white_king_pos: str = 'e1'
         self.black_king_pos: str = 'e8'
-        self.en_passant_target: str = None
+        self.en_passant_target: str | None = None
        
     def __repr__(self):
         return vars(self.squares) 
@@ -140,7 +140,7 @@ class Board:
             elif char == 'K':
                 self.white_king_pos = pos
                 
-            if piece.type == None or piece.colour == None:
+            if piece.type is None or piece.colour is None:
                 findex += 1
                 continue
             else: 

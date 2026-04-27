@@ -92,9 +92,9 @@ def parse_initial_state(input: str):
     return fen, pgn  
     
 def move_or_command(player_input):
-    if re.search(CMD_PATTERN, player_input, re.I):
+    if re.fullmatch(CMD_PATTERN, player_input, re.I):
         return 'cmd'
-    if re.search(SAN_PATTERN, player_input, re.I):
+    if re.fullmatch(SAN_PATTERN, player_input, re.I):
         return 'move'
     raise ValueError('Input is not a move or supported command')
                 

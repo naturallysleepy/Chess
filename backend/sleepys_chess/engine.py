@@ -18,11 +18,11 @@ class ChessEngine:
         self.command_log: list[str] = []
         self.message: str = ''
         
-        self.checkpoint: GameState = None
+        self.checkpoint: GameState | None = None
         self.expiry_clock = 0 
         
     def update_clock(self, ticks: int =  1):
-        self.message = None
+        self.message = ''
         
         if self.expiry_clock < 0: # Undershoot
             self.expiry_clock = 0
@@ -56,8 +56,10 @@ class ChessEngine:
                 self.message = f'The command "{command_str}" is not supported!'           
             return self
     
-    def execute_undo(self, move_num=None, colour=None):
-        self.game, self.checkpoint = self.game.undo(int(move_num), str(colour))
+    def execute_undo(self, move_num: int | str | None=None, colour=None):
+        if move_num is not None:
+            move_num = int(move_num)
+        self.game, self.checkpoint = self.game.undo(move_num, str(colour))
         return self
         
     def exit_game(self):
@@ -124,7 +126,7 @@ class ChessEngine:
         response_map[move_or_command(input)](input)
         
     # TODO: Config compatibility
-    def run(self, fen_or_pgn: str=None, config=None):
+    def run(self, fen_or_pgn: str | None=None, config=None):
         self.game = create_game(fen_or_pgn)
         while not self.exit:
             print(self.game) 

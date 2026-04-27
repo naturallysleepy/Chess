@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <link rel="stylesheet" href="style.css">
+    </head>
+    <body>
+        <canvas id="board" width="1024" height="1024"></canvas>
+        <div id="controls">
+            <button>Undo</button>
+            <button>Restart</button>
+            <button>Load</button>
+            <button>Save</button>
+        </div>
+        <script>
+            const board = document.getElementById("board")
+            const ctx = board.getContext("2d")
+
+            // 8x8 board
+            const size = board.width / 8
+
+            for (let i = 0; i < 8; i ++) {
+                for (let j = 0; j < 8; j ++){
+                    if ((i % 2) != (j % 2)){
+                        ctx.rect(size * j, size * i, size, size)
+                        ctx.fillRect(size * j, size * i, size, size)
+                    }
+                }
+            }
+        </script>
+    </body>
+</html>
