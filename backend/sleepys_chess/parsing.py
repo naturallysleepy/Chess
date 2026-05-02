@@ -1,6 +1,6 @@
 import re
 
-SAN_PATTERN = r'(?:[KQRBN]?[a-h1-8]?x?[a-h][1-8](?:=[KQRBN])?|O-O(?:-O)?)[+#]?' # SAN: Standard Algebraic Notation
+SAN_PATTERN = r'(?:[KQRBN]?([a-h][1-8]|[a-h1-8])?x?[a-h][1-8](?:=[KQRBN])?|O-O(?:-O)?)[+#]?' # SAN: Standard Algebraic Notation
 PGN_PATTERN = rf'(\d+\.?\s?{SAN_PATTERN}\s)((?:\d+\.\.\.)?{SAN_PATTERN}\s)'
 FEN_PATTERN = r'(?:[rnbqkpRNBQKP1-8]{1,8}/){7}[rnbqkpRNBQKP1-8]{1,8} [wb] (?:[KQkq]{1, 4}|-) (?:[a-h][1-8]|-) \d+ \d+'
 CMD_PATTERN =  r'(/.*|resign|q(?:uit)?|exit|[?]|help)'
@@ -11,7 +11,7 @@ def parse_move(player_move, re_flags=0) -> list[dict] | dict:
     token_patterns = {
         'pawn':r'^((?P<origin>[a-h])(?P<capture>x))?(?P<destination>[a-h][2-7])(?P<check>\+|#)?$',
         'promotion': r'^((?P<origin>[a-h])(?P<capture>x))?(?P<destination>[a-h][18])(=(?P<promotion>[NBRQ]))(?P<check>\+|#)?$',
-        'piece': r'^(?P<piece>[NBRQK])(?P<origin>[a-h1-8])?(?P<capture>x)?(?P<destination>[a-h][1-8])(?P<check>\+|#)?$',
+        'piece': r'^(?P<piece>[NBRQK])(?P<origin>[a-h1-8]|[a-h][1-8])?(?P<capture>x)?(?P<destination>[a-h][1-8])(?P<check>\+|#)?$',
         'castling': r'^(?P<side>O-O(-O)?)(?P<check>\+|#)?$'
     }
     move_type = None

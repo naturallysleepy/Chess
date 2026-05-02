@@ -99,9 +99,9 @@ class GameState:
             
     def generate_pgn(self, start_move: int | None = None, end_move: int | None = None) -> str:
         pgn_string = ''
-        error = 0 if 'black' in self.move_history[-1] else 1
+        remainder = 0 if 'black' in self.move_history[-1] else 1
 
-        start_num = self.fullmoves - len(self.move_history) + error
+        start_num = self.fullmoves - len(self.move_history) + remainder
         history_start = None
         if start_move:
             history_start = start_move - start_num 
@@ -476,29 +476,29 @@ def validate_move(move_data : dict, game : GameState, player : str):
             sign = 1 if player == 'white' else -1
             
             # Files only change when pawn captures
-            origin_file = move_details['origin'] if move_details['capture'] else dest_file
-            origin_rank = dest_rank - sign
+            hint_file = move_details['origin'] if move_details['capture'] else dest_file
+            hint_rank = dest_rank - sign
             double_rank = 4 if player == 'white' else 5
             if dest_rank == double_rank:
                 potential_o_ranks = [dest_rank - 2 * sign, dest_rank - sign]
                 for o_rank in potential_o_ranks.copy():
-                    pos = f'{origin_file}{o_rank}'
+                    pos = f'{hint_file}{o_rank}'
                     if pos not in board or board[pos] != Piece('p', player):
                         potential_o_ranks.remove(o_rank)
                 
                 if len(potential_o_ranks) == 1:
-                    origin_rank = potential_o_ranks[0]
+                    hint_rank = potential_o_ranks[0]
                 elif len(potential_o_ranks) == 2:
                     # The pawn closest to double rank should move
-                    origin_rank =  min(potential_o_ranks, key = lambda r: abs(double_rank - r))
+                    hint_rank =  min(potential_o_ranks, key = lambda r: abs(double_rank - r))
                 else:
                     print(f'No {player} pawn that can move to {destination}.')
                     return None
             
             # Found coordinates
-            pawn_origin = f'{origin_file}{origin_rank}'
+            pawn_origin = f'{hint_file}{hint_rank}'
             pawn = game.board[pawn_origin]
-            is_double = (abs(origin_rank - dest_rank) == 2)
+            is_double = (abs(hint_rank - dest_rank) == 2)
             is_en_passant = (destination == game.board.en_passant_target)
             
             move = Move(pawn_origin, destination, pawn)
@@ -517,9 +517,9 @@ def validate_move(move_data : dict, game : GameState, player : str):
             
         case 'promotion':
             '''Find pawn''' 
-            origin_rank = '7' if player == 'white' else '2'
-            origin_file = move_details['origin'] if move_details['capture'] else dest_file
-            pawn_origin = f'{origin_file}{origin_rank}'
+            hint_rank = '7' if player == 'white' else '2'
+            hint_file = move_details['origin'] if move_details['capture'] else dest_file
+            pawn_origin = f'{hint_file}{hint_rank}'
             pawn = game.board[pawn_origin]
             
             promote_type = move_details['promotion']
@@ -551,19 +551,63 @@ def validate_move(move_data : dict, game : GameState, player : str):
                 return None
                 
             conflict = len(origin) > 1
+            conflict_set = set()
             if conflict:
-                for square in origin:
-                    if origin_hint and origin_hint in square:
-                        origin = square
-                        break
-                else:
+                if not origin_hint:
                     print(f'There are multiple valid {piece_name}s which can move to {destination}.')
                     return origin
+                
+                origin_resolved = set()
+                conflict_set = origin.copy() 
+
+                for square in conflict_set:
+                    if origin_hint in square:
+                        origin_resolved.add(square)
+
+                if not origin_resolved:
+                    print(f"{move_notation} is not a valid move.")
+                    return None
+                elif len(origin_resolved) > 1:
+                    print(f"Disambiguation insufficient, multiple {piece_name}s can move to {destination}")
+                    return origin_resolved
+                else: 
+                    origin = list(origin_resolved)[0]
+
+
             else:
                 origin = list(origin)[0]
             
             move = Move(origin, destination, piece)
-            move.disambiguation = origin_hint
+
+            if not conflict:
+                move.disambiguation = None # Prevent unnecessary disambiguation
+
+            elif len(origin_hint) == 1: # 1 disambiguation character
+                move.disambiguation = origin_hint 
+                
+            else: # Only case of length 2 remains, else handled in parsing phase
+                hint_file, hint_rank = [*origin_hint]
+
+                shared_file = 0
+                shared_rank = 0
+                for square in conflict_set:
+                    file, rank = [*square]
+        
+                    if file == hint_file:
+                        shared_file += 1
+                    if rank == hint_rank:
+                        shared_rank += 1
+
+                if shared_file == 1:
+                    # Only file disambiguation needed
+                    move.disambiguation = hint_file
+                elif shared_rank == 1:
+                    # Only rank disambiguation needed
+                    move.disambiguation = hint_rank
+                else:
+                    # Both file and rank disambiguation is necessary
+                    move.disambiguation = origin_hint 
+    
             move.is_capture = is_capture
             if is_legal_move(move, game):
                 return move
