@@ -29,12 +29,11 @@ This is a terminal-based chess game written in python
    - /restart: restart the game to its initial state
 
 ## Known Issues
-- FEN and PGN parsing is fully supported for string input. File based parsing is partially implemented and requires further refinement
+- FEN and PGN parsing is fully supported for string input. File (.pgn and .fen) based parsing is partially implemented and requires further refinement
 
 ## Future Work
-- Add graphical user interface 
+- Add web-based graphical user interface 
 - Expand command handling
-- Refine game flow
 - Implement chess bot 
 
 ## Notes
