@@ -243,14 +243,14 @@ class GameState:
         return self
       
     def undo(self, dest_move: int | None = None, colour: str | None = None):
-        is_restart = dest_move == 0
         if dest_move is None:
             dest_move = self.fullmoves - 1
         elif dest_move < 0:
             dest_move = self.fullmoves + dest_move
         if colour is None:
             colour = self.turn
-        
+        is_restart = dest_move == 0
+
         first_move_num = abs(self.fullmoves - len(self.move_history))
         
         if (dest_move < first_move_num and dest_move != 0) or dest_move > self.fullmoves:
@@ -264,10 +264,12 @@ class GameState:
         new_game.load_fen(self.position_history[0])
         desired_pgn = None
         if not is_restart:
-            desired_pgn = self.generate_pgn(end_move=dest_move)
+            # Generate all moves played until dest and make them
+            desired_pgn = self.generate_pgn(end_move=dest_move) 
             new_game.load_pgn(desired_pgn)
-            if new_game.turn != colour :
-                new_game.process_player_move(str(self.move_history[dest_move][opposite(colour)]))
+
+        if new_game.turn != colour: 
+            new_game.process_player_move(str(self.move_history[dest_move][opposite(colour)]))
         self = new_game
                     
         return self, snapshot 

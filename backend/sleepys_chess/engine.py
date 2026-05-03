@@ -34,7 +34,7 @@ class ChessEngine:
  
     def process_command(self, command_str):
             command_map = {
-                r'/(undo|back)\s*(-?\d+)?\s*(b(?:lack)?|w(?:hite)?)?': self.game.undo,
+                r'/(undo|back)\s*(-?\d+)?\s*(b(?:lack)?|w(?:hite)?)?': self.execute_undo,
                 r'/?(resign|q(?:uit)?|give up)': self.resign,
                 r'/?(exit|close)': self.exit_game,
                 r'/(restart|reset)': self.restart,
@@ -57,9 +57,13 @@ class ChessEngine:
             return self
     
     def execute_undo(self, move_num: int | str | None=None, colour=None):
-        if move_num is not None:
+        if isinstance(move_num, str):
             move_num = int(move_num)
-        self.game, self.checkpoint = self.game.undo(move_num, str(colour))
+
+        abbreviations = {'w': 'white', 'b': 'black'} # Need colour unabbreviated
+        colour = abbreviations.get(colour, colour)
+
+        self.game, self.checkpoint = self.game.undo(move_num, colour)
         return self
         
     def exit_game(self):
