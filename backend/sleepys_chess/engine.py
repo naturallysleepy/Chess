@@ -80,7 +80,7 @@ class ChessEngine:
         return self
         
     def restart(self):
-        self.game, self.checkpoint = self.game.undo(0) # undo(0) is analogous to restart
+        self.game, self.checkpoint = self.game.undo(0, 'white') # Analogous to restart
         if self.checkpoint: # Will be None if attempted on 1st move
             self.game.move_history = []
             self.game.position_count = {}
