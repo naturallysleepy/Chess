@@ -1,4 +1,6 @@
+# My ignores
 /.vscode
+/backend/tests
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -28,4 +30,6 @@ MANIFEST
 # Flask stuff:
 instance/
 .webassets-cache
-/backend/tests
+
+
+
