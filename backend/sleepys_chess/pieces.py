@@ -1,4 +1,4 @@
-
+from .utils import COLOURS
 
 PIECE_TYPES = ['p', 'N', 'B', 'R', 'Q', 'K']
 CHESS_PIECES = {
@@ -6,7 +6,6 @@ CHESS_PIECES = {
     'black': {'K': '♚', 'Q': '♛', 'R': '♜', 'B': '♝', 'N': '♞', 'p': '♟'}
 }
 PIECE_NAMES = {'K': 'king', 'Q': 'queen', 'R': 'rook', 'B': 'bishop', 'N': 'knight', 'p': 'pawn'}
-COLOURS = ['black', 'white'] 
 
 class Piece:
     def __init__(self, type, colour):

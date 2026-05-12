@@ -1,17 +1,20 @@
+# Built ins
+from __future__ import annotations
+import re, copy
+
+
 from .moves import Move 
 from .moverules import is_pawn_move, is_knight_move, is_bishop_move, is_rook_move
 from .parsing import parse_move, FEN_INITIAL
 
 from .board import Board, FILES
-from .pieces import Piece, PIECE_NAMES, COLOURS, is_friendly
+from .pieces import Piece, PIECE_NAMES, is_friendly
 from .board import find_pawn_attacks, find_knight_attacks, find_bishop_attacks
 from .board import find_rook_attacks, find_king_attacks, find_attacker, possible_destinations
 
 from .parsing import parse_initial_state, SAN_PATTERN
-from .utils import opposite, strip_brackets
+from .utils import opposite, strip_brackets, COLOURS, is_colour
 
-# Built ins
-import re, copy
 
 class GameState:
     def __init__(self, fen=None, pgn=None):
@@ -34,12 +37,12 @@ class GameState:
         self.position_history: dict[int, str] = {}
         self.position_count: dict[str, int] = {}
         self.halfmove_clock: int = 0
-        self.fullmoves: int = 0  
+        self.fullmoves: int = 1 
         
-        if fen:
-            self.load_fen(fen) 
+        if fen is None:
+            self.load_fen(FEN_INITIAL) 
         else:
-            self.load_fen(FEN_INITIAL)  
+            self.load_fen(fen)  
             
         if pgn:
             self.load_pgn(pgn)
@@ -47,9 +50,17 @@ class GameState:
     def __repr__(self):
         return vars(self)
     
-    def __str__(self):
+    def get_info(self, perspec: str | None = None) -> list[str]:
+        if not perspec and not self.board.perspective:
+            perspec = self.turn
+        elif not perspec:
+            perspec = self.board.perspective
+
+        if not is_colour(perspec):
+            raise ValueError('Invalid perspec passed to .get_info()')
+
         string_list = []
-        board_string = self.board.render(self.turn)  
+        board_string = self.board.render(perspec)  
         
         # Add board
         string_list.append(board_string + '\n')
@@ -71,7 +82,10 @@ class GameState:
             other_string += f"{self.turn.capitalize()} to move."
         string_list.append(other_string)
             
-        return '\n'.join(string_list)
+        return string_list
+
+    def __str__(self):
+        return '\n'.join(self.get_info())
                 
     def generate_fen(self) -> str:
         to_fen = {'white': lambda x: x.upper(), 'black': lambda x: x.lower()}
@@ -99,9 +113,8 @@ class GameState:
             
     def generate_pgn(self, start_move: int | None = None, end_move: int | None = None) -> str:
         pgn_string = ''
-        remainder = 0 if 'black' in self.move_history[-1] else 1
 
-        start_num = self.fullmoves - len(self.move_history) + remainder
+        start_num = self.get_start_move()
         history_start = None
         if start_move:
             history_start = start_move - start_num 
@@ -109,7 +122,7 @@ class GameState:
         if end_move:
             history_end = end_move - start_num
             
-        for i, moves in enumerate(self.move_history[history_start:history_end], 1):
+        for i, moves in enumerate(self.move_history[history_start:history_end]):
             pgn_string += f'{start_num + i}.'
             if len(self.move_history[0]) == 1 and 'black' in self.move_history[0] and i == 1:
                 pgn_string += '..'
@@ -121,7 +134,9 @@ class GameState:
         return pgn_string
     
     def load_fen(self, fen: str, is_start=True):
-
+        if not fen:
+            return self
+        
         fen_fields = fen.split() 
         board, turn, castling, en_passant_target, half_moves, full_moves = fen_fields
         if not re.match(r'^([rnbqkpRNBQKP1-8]{1,8}(/|\Z)){8}$', board):
@@ -136,7 +151,7 @@ class GameState:
             for key in self.can_castle.keys():
                 colour, side = key.split('_')
                 self.can_castle[f'{colour}_{side}'] = to_fen[colour](side[0]) in castling
-                king_pos = self.board.black_king_pos if colour == 'black' else self.board.white_king_pos
+                king_pos = self.board.king_positions[colour]
                 self.in_check[colour] = square_is_attacked(king_pos, (self.board, colour))
                 
         if en_passant_target != '-':
@@ -197,33 +212,10 @@ class GameState:
                 self.move_history[-1][self.winner].check_str = '#'
         return self  
     
-    def make_move(self, move: Move):
+    def play_move(self, move: Move):
         piece = self.board[move.origin]
-
         back_rank = 1 if piece.colour == 'white' else 8
-        if move.special == 'en passant':
-            target_file, target_rank = [*self.board.en_passant_target]
-            target_rank = int(target_rank)
-            target_rank = target_rank + 1 if self.turn == 'black' else target_rank - 1
-            target = f'{target_file}{target_rank}'
-            
-            del self.board[target] # Delete target pawn
-        
-        elif move.special == 'castling':
-            dest_file = move.destination[0]
-            rook_origin = f'a{back_rank}' if dest_file == 'c' else f'h{back_rank}'
-            rook_destination = f'd{back_rank}' if dest_file == 'c' else f'f{back_rank}'
-            rook = self.board[rook_origin]
-            
-            # Move the rook
-            del self.board[rook_origin]
-            self.board[rook_destination] = rook      
-        elif move.special == 'promotion':
-            piece = Piece(type=move.promote, colour=piece.colour)
-        
-        # Update dest and origin squares  
-        self.board[move.destination] = piece
-        del self.board[move.origin]
+        self.board.make_move(move)
         
         if piece.type == 'R' and move.origin in [f'a{back_rank}', f'h{back_rank}']:
             side = '_queenside' if move.origin[0] == 'a' else '_kingside'
@@ -235,48 +227,80 @@ class GameState:
         # Update self data
         last_turn = self.turn
         self.turn = opposite(self.turn)
-        if piece.type == 'K' and last_turn == 'white':
-            self.board.white_king_pos = move.destination
-        elif piece.type == 'K' and last_turn == 'black':
-            self.board.black_king_pos = move.destination
+        if piece.type == 'K':
+            self.board.king_positions[last_turn] = move.destination
             
         return self
       
     def undo(self, dest_move: int | None = None, colour: str | None = None):
-        if dest_move is None:
-            dest_move = self.fullmoves - 1
-        elif dest_move < 0:
-            dest_move = self.fullmoves + dest_move
+        first_move_num = self.get_start_move()
+
         if colour is None:
             colour = self.turn
+        if dest_move is None and colour == self.turn: 
+            dest_move = self.fullmoves - 1 # Go back a full move
+        elif dest_move is None: # colour != self.turn
+            dest_move = self.fullmoves # Will go back a halfmove
+        elif dest_move < 0:
+            dest_move = self.fullmoves + dest_move
         is_restart = dest_move == 0
-
-        first_move_num = abs(self.fullmoves - len(self.move_history))
         
-        if (dest_move < first_move_num and dest_move != 0) or dest_move > self.fullmoves:
-            raise ValueError(f'Cannot undo: move {dest_move} does not exist')
-        elif dest_move == self.fullmoves:
+        if (dest_move < first_move_num and not is_restart) or dest_move > self.fullmoves:
+            raise ValueError(f'Cannot undo: move {dest_move} does not exist' )
+        elif dest_move == self.fullmoves and colour == self.turn:
             return self, None # Do literally nothing
         
         snapshot = copy.deepcopy(self) # Snapshot is held for one full move for option to revert
         
-        new_game = GameState()
-        new_game.load_fen(self.position_history[0])
-        desired_pgn = None
-        if not is_restart:
-            # Generate all moves played until dest and make them
-            desired_pgn = self.generate_pgn(end_move=dest_move) 
-            new_game.load_pgn(desired_pgn)
-
+        new_game = GameState(fen='')
+        if is_restart:
+            new_game.load_fen(self.position_history[0])
+        else:
+            new_game.load_history(self, dest_move, colour)
+        
         if new_game.turn != colour: 
-            new_game.process_player_move(str(self.move_history[dest_move][opposite(colour)]))
+            new_game.process_player_move(self.move_history[dest_move - first_move_num + 1][opposite(colour)])
         self = new_game
-                    
+        print(f'Before: {snapshot} \n\nAfter: {self}')
         return self, snapshot 
-    
-    def process_player_move(self, player_move: str):
+
+    def load_history(self, other: GameState, dest_move: int, dest_colour: str):
+        start_move = other.get_start_move() 
+
+        if dest_move - 1 in other.position_history:
+            for mv_num, pos in other.position_history.items():
+                self.position_history[mv_num] = pos
+                only_pos = pos[:-4] # Remove halfmove and fullmove counts 
+                if only_pos in self.position_count:
+                    self.position_count[only_pos] += 1
+                else:
+                    self.position_count[only_pos] = 1
+                if mv_num == dest_move - 1:
+                    break
+            move_hist_end = dest_move - start_move - 1 # Move before dest
+            self.move_history = other.move_history[:move_hist_end] # End right before last move
+
+            # Prevent false black move history
+            if dest_colour == 'white':
+                last_move = other.move_history[move_hist_end]
+                self.move_history.append(last_move) # Both turns
+            else:
+                last_turn = other.move_history[move_hist_end]['white']
+                self.move_history.append({'white': last_turn}) # Only white turn
+
+            self.load_fen(other.position_history[dest_move - 1], False) # White's move before dest
+            last_black_move = dest_move - start_move - 1 # We want dest_move -1
+            self.process_player_move(other.move_history[last_black_move]['black']) 
+            if dest_colour == 'black':
+                self.process_player_move(other.move_history[dest_move - start_move]['white'])
+
+        return self
+
+    def process_player_move(self, player_move: str | Move):
         last_passant = self.board.en_passant_target
-        move_info = parse_move(player_move, re.IGNORECASE)
+        move_info = ''
+        if isinstance(player_move, str):
+            move_info = parse_move(player_move, re.IGNORECASE)
         validated = None
         
         if isinstance(move_info, list): # Ambiguous
@@ -295,6 +319,10 @@ class GameState:
                 validated = conflicts
             else:
                 raise Exception(f'Could not validate {player_move}')
+        elif isinstance(player_move, Move):
+            if not is_legal_move(player_move, self):
+                raise Exception(f'{player_move} is illegal')
+            validated = player_move
         else: # Unambiguous
             validated = validate_move(move_info, self, self.turn)
             
@@ -302,13 +330,11 @@ class GameState:
             raise Exception('Move is ambiguous', validated) 
         elif validated:
             last_turn = self.turn
-            self.make_move(validated)
+            self.play_move(validated) # Turn and other self data is updated here
                 
             # Update king position
-            if validated.piece == Piece('K', 'black'):
-                self.board.black_king_pos = validated.destination
-            elif validated.piece == Piece('K', 'white'):
-                self.board.white_king_pos = validated.destination
+            if validated.piece.type == 'K':
+                self.board.king_positions[validated.piece.colour] = validated.destination
                 
             if last_passant == self.board.en_passant_target: # Only flags if no en_passant performed
                 self.board.en_passant_target = None
@@ -325,9 +351,9 @@ class GameState:
                 else:
                     self.move_history.append({last_turn: validated}) # If black is first move
                 self.fullmoves += 1
-            else:
+            else: 
                 self.move_history.append({last_turn: validated}) # PGN analog
-                self.position_history[self.fullmoves + 1] = snapshot # FEN analog
+                self.position_history[self.fullmoves] = snapshot # FEN analog, updates on whites move ONLY
                 
             # Remove halfmove and fullmove counts to store positional data only
             snapshot_position = snapshot[:-4]
@@ -394,11 +420,15 @@ class GameState:
             return legal_moves   
              
     def update_check(self):
-        for colour in COLOURS:
-                king_pos = self.board.black_king_pos if colour == 'black' else self.board.white_king_pos
-                self.in_check[colour] = square_is_attacked(king_pos, (self.board, colour))
+        for colour, king_pos in self.board.king_positions.items():
+            self.in_check[colour] = square_is_attacked(king_pos, (self.board, colour))
         return self
- 
+
+    def get_start_move(self):
+        initial_state = self.position_history[0] # Initial FEN
+        move_num = initial_state.split()[-1] # Split FEN string into fields, last field is fullmove num
+        return int(move_num)
+
 def create_game(input=None) -> GameState:
     fen, pgn = parse_initial_state(input)
     new_game = GameState(fen, pgn)
@@ -424,7 +454,7 @@ def square_is_attacked(square : str, game : GameState | tuple[Board, str]) -> bo
     file, rank= [*square]
     
     # Check for pawns
-    pawn_attacks = find_pawn_attacks(file, rank, colour)
+    pawn_attacks = find_pawn_attacks(file, rank, colour, False)
     if find_attacker(pawn_attacks, ['p', 'B', 'Q', 'K'], board, opp_colour):
         return True
     
@@ -478,29 +508,29 @@ def validate_move(move_data : dict, game : GameState, player : str):
             sign = 1 if player == 'white' else -1
             
             # Files only change when pawn captures
-            hint_file = move_details['origin'] if move_details['capture'] else dest_file
-            hint_rank = dest_rank - sign
+            origin_file = move_details['origin'] if move_details['capture'] else dest_file
+            origin_rank = dest_rank - sign
             double_rank = 4 if player == 'white' else 5
             if dest_rank == double_rank:
                 potential_o_ranks = [dest_rank - 2 * sign, dest_rank - sign]
                 for o_rank in potential_o_ranks.copy():
-                    pos = f'{hint_file}{o_rank}'
+                    pos = f'{origin_file}{o_rank}'
                     if pos not in board or board[pos] != Piece('p', player):
                         potential_o_ranks.remove(o_rank)
                 
                 if len(potential_o_ranks) == 1:
-                    hint_rank = potential_o_ranks[0]
+                    origin_rank = potential_o_ranks[0]
                 elif len(potential_o_ranks) == 2:
                     # The pawn closest to double rank should move
-                    hint_rank =  min(potential_o_ranks, key = lambda r: abs(double_rank - r))
+                    origin_rank =  min(potential_o_ranks, key = lambda r: abs(double_rank - r))
                 else:
                     print(f'No {player} pawn that can move to {destination}.')
                     return None
             
             # Found coordinates
-            pawn_origin = f'{hint_file}{hint_rank}'
+            pawn_origin = f'{origin_file}{origin_rank}'
             pawn = game.board[pawn_origin]
-            is_double = (abs(hint_rank - dest_rank) == 2)
+            is_double = (abs(origin_rank - dest_rank) == 2)
             is_en_passant = (destination == game.board.en_passant_target)
             
             move = Move(pawn_origin, destination, pawn)
@@ -511,7 +541,7 @@ def validate_move(move_data : dict, game : GameState, player : str):
             '''Check if pawn exists at location and move is legal'''
             if pawn == Piece('p', player) and is_legal_move(move, game):
                 if is_double:
-                    game.en_passant_target = f'{dest_file}{dest_rank - sign}'
+                    game.board.en_passant_target = f'{dest_file}{dest_rank - sign}'
                 return move
             else:
                 print(f'Cannot move pawn to {destination}')
@@ -519,9 +549,9 @@ def validate_move(move_data : dict, game : GameState, player : str):
             
         case 'promotion':
             '''Find pawn''' 
-            hint_rank = '7' if player == 'white' else '2'
-            hint_file = move_details['origin'] if move_details['capture'] else dest_file
-            pawn_origin = f'{hint_file}{hint_rank}'
+            origin_rank = '7' if player == 'white' else '2'
+            origin_file = move_details['origin'] if move_details['capture'] else dest_file
+            pawn_origin = f'{origin_file}{origin_rank}'
             pawn = game.board[pawn_origin]
             
             promote_type = move_details['promotion']
@@ -594,7 +624,7 @@ def validate_move(move_data : dict, game : GameState, player : str):
                 shared_rank = 0
                 for square in conflict_set:
                     file, rank = [*square]
-        
+
                     if file == hint_file:
                         shared_file += 1
                     if rank == hint_rank:
@@ -639,7 +669,7 @@ def is_legal_move(move: Move, game : GameState) -> bool | list[Move]:
     if move.piece.type == 'K':
         king_pos = move.destination
     else:
-        king_pos = game.board.white_king_pos if piece.colour == 'white' else game.board.black_king_pos
+        king_pos = game.board.king_positions[piece.colour]
         
     king_is_safe = square_remains_safe(king_pos, move, game, piece.colour)
     if not king_is_safe or is_friendly(move.destination, piece, board) or not piece == move.piece:
@@ -700,7 +730,7 @@ def square_remains_safe(square: str, move: Move, game: GameState, colour: str):
 
 def simulate_move(move : Move, game : GameState):
     clone_game = copy.deepcopy(game)
-    clone_game.make_move(move)
+    clone_game.play_move(move)
     return clone_game
 
 def can_castle_kingside(piece: Piece, game):

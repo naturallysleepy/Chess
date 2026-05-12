@@ -11,7 +11,20 @@ class Move:
         self.check_str: str = ''
         self.disambiguation: str | None = None
     def __repr__(self):
-        return f"Move('{self.origin}', '{self.destination}', '{self.piece}', special: {self.special}, promote: {self.promote})"
+        representation = str(self.piece)
+        representation += ' {'
+
+        cap = 'x' if self.is_capture else '→'
+        representation += f'{self.origin} {cap} {self.destination}' 
+        representation += '}'
+        representation += self.check_str # e.g. ...{e4 → e5}+
+
+        if self.promote:
+            representation += f' == {self.promote}'
+        if self.special:
+            representation += f' ({self.special})'
+
+        return representation
     def __str__(self):
         string = ''
         check_symbol = self.check_str

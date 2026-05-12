@@ -1,4 +1,8 @@
 import os
+COLOURS = ['black', 'white'] 
+
+def is_colour(colour: str):
+    return colour in COLOURS
 
 def opposite(colour : str):
     if colour not in ['white', 'black']:
@@ -21,6 +25,11 @@ def strip_brackets(text, open='(', close = ')'):
             result.append(char)
         
     return ''.join(result)
+
+def unabbreviate(colour: str | None):
+    abbreviations = {'w': 'white', 'b': 'black'} 
+    colour = abbreviations.get(colour, colour)
+    return colour 
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')

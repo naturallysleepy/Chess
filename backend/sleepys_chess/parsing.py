@@ -1,10 +1,10 @@
 import re
 
-SAN_PATTERN = r'(?:[KQRBN]?([a-h][1-8]|[a-h1-8])?x?[a-h][1-8](?:=[KQRBN])?|O-O(?:-O)?)[+#]?' # SAN: Standard Algebraic Notation
-PGN_PATTERN = rf'(\d+\.?\s?{SAN_PATTERN}\s)((?:\d+\.\.\.)?{SAN_PATTERN}\s)'
+SAN_PATTERN = r'(?:[KQRBN]?(?: [a-h][1-8]|[a-h1-8])?x?[a-h][1-8](?:=[KQRBN])?|O-O(?:-O)?)[+#]?' # SAN: Standard Algebraic Notation
+PGN_PATTERN = rf'(\d+\.?\s?{SAN_PATTERN})(\s(?:\d+\.\.\.)?{SAN_PATTERN}\s?)?'
 FEN_PATTERN = r'(?:[rnbqkpRNBQKP1-8]{1,8}/){7}[rnbqkpRNBQKP1-8]{1,8} [wb] (?:[KQkq]{1, 4}|-) (?:[a-h][1-8]|-) \d+ \d+'
 CMD_PATTERN =  r'(/.*|resign|q(?:uit)?|exit|[?]|help)'
-FEN_INITIAL = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 0'
+FEN_INITIAL = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
 def parse_move(player_move, re_flags=0) -> list[dict] | dict: 
     # Finds and groups move data
