@@ -2,19 +2,24 @@
 from __future__ import annotations
 import re, copy
 
-
 from .moves import Move 
-from .moverules import is_pawn_move, is_knight_move, is_bishop_move, is_rook_move
+from . import moverules as mr
 from .parsing import parse_move, FEN_INITIAL
 
 from .board import Board, FILES
-from .pieces import Piece, PIECE_NAMES, is_friendly
-from .board import find_pawn_attacks, find_knight_attacks, find_bishop_attacks
-from .board import find_rook_attacks, find_king_attacks, find_attacker, possible_destinations
+from .pieces import Piece, is_friendly
 
 from .parsing import parse_initial_state, SAN_PATTERN
-from .utils import opposite, strip_brackets, COLOURS, is_colour
+from .utils import opposite, strip_brackets, is_colour
 
+HALFMOVE_LIMIT = 100
+REP_LIMIT = 3
+
+class IllegalMove(Exception):
+    pass
+
+class AmbiguityError(Exception):
+    pass
 
 class GameState:
     def __init__(self, fen=None, pgn=None):
@@ -261,13 +266,14 @@ class GameState:
         if new_game.turn != colour: 
             new_game.process_player_move(self.move_history[dest_move - first_move_num + 1][opposite(colour)])
         self = new_game
-        print(f'Before: {snapshot} \n\nAfter: {self}')
+        # print(f'Before: {snapshot} \n\nAfter: {self}')
         return self, snapshot 
 
+    # TODO: FIX INDEX ISSUES
     def load_history(self, other: GameState, dest_move: int, dest_colour: str):
         start_move = other.get_start_move() 
 
-        if dest_move - 1 in other.position_history:
+        if dest_move - 1 in other.position_history: # TODO: Else?
             for mv_num, pos in other.position_history.items():
                 self.position_history[mv_num] = pos
                 only_pos = pos[:-4] # Remove halfmove and fullmove counts 
@@ -289,7 +295,9 @@ class GameState:
                 self.move_history.append({'white': last_turn}) # Only white turn
 
             self.load_fen(other.position_history[dest_move - 1], False) # White's move before dest
-            last_black_move = dest_move - start_move - 1 # We want dest_move -1
+
+            '''!!!PROBLEM!!!'''
+            last_black_move = dest_move - start_move - 1 # We want dest_move -1 
             self.process_player_move(other.move_history[last_black_move]['black']) 
             if dest_colour == 'black':
                 self.process_player_move(other.move_history[dest_move - start_move]['white'])
@@ -299,79 +307,145 @@ class GameState:
     def process_player_move(self, player_move: str | Move):
         last_passant = self.board.en_passant_target
         move_info = ''
-        if isinstance(player_move, str):
-            move_info = parse_move(player_move, re.IGNORECASE)
+
+        if isinstance(player_move, Move): # Convert to str to validate
+            player_move = str(player_move)
+        move_info = parse_move(player_move, re.IGNORECASE)    
         validated = None
         
-        if isinstance(move_info, list): # Ambiguous
-            potential_moves = []
+        # Validate move
+        if isinstance(move_info, list): # Parsing ambiguity
+            potential_moves = [] 
             conflicts = set()
             for move_dict in move_info:
-                potential_move = validate_move(move_dict, self, self.turn)
+                try:    
+                    potential_move = mr.validate_move(move_dict, self.board, self.turn)
+                except:
+                    continue
                 if isinstance(potential_move, Move):
                     potential_moves.append(potential_move)
-                if isinstance(potential_move, list):
-                    conflicts.add(potential_move)
+                if isinstance(potential_move, set):
+                    conflicts.update(potential_move)
             
             if len(potential_moves) == 1:
                 validated = potential_moves[0]
             elif len(potential_moves) == 0 and conflicts:
                 validated = conflicts
             else:
-                raise Exception(f'Could not validate {player_move}')
-        elif isinstance(player_move, Move):
-            if not is_legal_move(player_move, self):
-                raise Exception(f'{player_move} is illegal')
-            validated = player_move
+                raise AmbiguityError(f'Could not validate {player_move}', potential_moves)
         else: # Unambiguous
-            validated = validate_move(move_info, self, self.turn)
+            validated = mr.validate_move(move_info, self.board, self.turn)
             
-        if isinstance(validated, set):
-            raise Exception('Move is ambiguous', validated) 
-        elif validated:
-            last_turn = self.turn
-            self.play_move(validated) # Turn and other self data is updated here
-                
-            # Update king position
-            if validated.piece.type == 'K':
-                self.board.king_positions[validated.piece.colour] = validated.destination
-                
-            if last_passant == self.board.en_passant_target: # Only flags if no en_passant performed
-                self.board.en_passant_target = None
-            if validated.is_capture or validated.piece.type == 'p':
-                self.halfmove_clock = 0
+        if isinstance(validated, set): # Multiple possible moves
+            potential_moves = validated.copy()
+            for potential_move in potential_moves:
+                if not self.is_legal_move(potential_move):
+                    validated.remove(potential_move)
+            
+            if len(validated) > 1:
+                raise AmbiguityError(f'{player_move} is ambiguous', validated) 
+            elif len(validated) < 1: 
+                raise IllegalMove(f'{player_move} is not a legal move')
             else:
-                self.halfmove_clock += 1
+                validated = list(validated)[0]
+        else:
+            if not self.is_legal_move(validated):
+                raise IllegalMove(f'{player_move} is not a legal move')
             
-            # Update self history
-            snapshot = self.generate_fen()
-            if last_turn == 'black':
-                if self.move_history:
-                    self.move_history[-1][last_turn] = validated # PGN analog
-                else:
-                    self.move_history.append({last_turn: validated}) # If black is first move
-                self.fullmoves += 1
-            else: 
-                self.move_history.append({last_turn: validated}) # PGN analog
-                self.position_history[self.fullmoves] = snapshot # FEN analog, updates on whites move ONLY
-                
-            # Remove halfmove and fullmove counts to store positional data only
-            snapshot_position = snapshot[:-4]
-            if snapshot_position not in self.position_count:
-                self.position_count[snapshot_position] = 0
-            self.position_count[snapshot_position] += 1
+        last_turn = self.turn
+        self.play_move(validated) # Turn and other self data is updated here
             
-            # Update check and last move notation
-            self.update_check()
-            if any(self.in_check.values()):
-                self.move_history[-1][last_turn].check_str = '+'
+        # Update king position
+        if validated.piece.type == 'K':
+            self.board.king_positions[validated.piece.colour] = validated.destination
+            
+        if last_passant == self.board.en_passant_target: # Only flags if no en_passant performed
+            self.board.en_passant_target = None
+        if validated.is_capture or validated.piece.type == 'p':
+            self.halfmove_clock = 0
+        else:
+            self.halfmove_clock += 1
+        
+        # Update self history
+        snapshot = self.generate_fen()
+        if last_turn == 'black':
+            if self.move_history:
+                self.move_history[-1][last_turn] = validated # PGN analog
+            else:
+                self.move_history.append({last_turn: validated}) # If black is first move
+            self.fullmoves += 1
+        else: 
+            self.move_history.append({last_turn: validated}) # PGN analog
+            self.position_history[self.fullmoves] = snapshot # FEN analog, updates on whites move ONLY
+            
+        # Remove halfmove and fullmove counts to store positional data only
+        snapshot_position = snapshot[:-4]
+        if snapshot_position not in self.position_count:
+            self.position_count[snapshot_position] = 0
+        self.position_count[snapshot_position] += 1
+        
+        # Update check and last move notation
+        self.update_check()
+        if any(self.in_check.values()):
+            self.move_history[-1][last_turn].check_str = '+'
                 
         return self  
   
+    def is_legal_move(self, move: Move) -> bool | list[Move]:
+        board = self.board
+        piece = self.board[move.origin]
+        king_pos = ''
+        opp_colour = opposite(move.piece.colour)
+
+        if move.piece.type == 'K':
+            king_pos = move.destination
+        else:
+            king_pos = self.board.king_positions[piece.colour]
+            
+        king_is_safe = square_remains_safe(king_pos, move, self, piece.colour)
+        if not king_is_safe or is_friendly(move.destination, piece, board) or not piece == move.piece:
+            return False
+        
+        if move.origin not in board or board[move.origin].colour != move.piece.colour:
+            return False
+        
+        # Initial position
+        init_file, init_rank = [*move.origin]
+        init_rank = int(init_rank)
+        init_findex = FILES.index(init_file)
+        
+        dest_file, dest_rank = [*move.destination]
+        dest_rank = int(dest_rank)
+        dest_findex = FILES.index(dest_file)
+        match piece.type:
+            case 'p': return mr.is_pawn_move(move.origin, move.destination, board, piece.colour)
+            case 'N': return mr.is_knight_move(move.origin, move.destination)
+            case 'B': return mr.is_bishop_move(move.origin, move.destination, board)
+            case 'R': return mr.is_rook_move(move.origin, move.destination, board)
+            case 'Q': return mr.is_bishop_move(move.origin, move.destination, board) or mr.is_rook_move(move.origin, move.destination, board)
+            case 'K':        
+                '''Castling'''
+                if move.special == 'castling':
+                    if can_castle_kingside(piece, self):
+                        target = f'g{init_rank}'
+                        if move.destination == target:
+                            return True
+                    if can_castle_queenside(piece, self):
+                        target = f'c{init_rank}'
+                        if move.destination == target:
+                            return True
+                else:
+                    v_comps = [abs(init_findex - dest_findex), abs(init_rank - dest_rank)] # Vector components
+                    is_single_step = max(v_comps) == 1 and sum(v_comps) > 0
+                    is_safe = square_remains_safe(move.destination, move, self, move.piece.colour)
+                    if is_single_step and is_safe:
+                        return True
+        return False
+
     def check_if_end(self):
         player = self.turn
         has_legal_moves = self.legal_moves(flag='any')
-        last_position = self.generate_fen()
+        position_snapshot = self.generate_fen()[:-4] # Parts of FEN string that determine threefold rep
         
         if self.in_check[player] and not has_legal_moves:
             self.is_end = True
@@ -381,17 +455,21 @@ class GameState:
             self.is_end = True
             self.end_state = 'stalemate'
             self.winner = 'draw'
-        elif last_position[:-4] in self.position_count and self.position_count[last_position[:-4]] == 3:
+        elif position_snapshot in self.position_count and self.position_count[position_snapshot] == REP_LIMIT:
             self.is_end = True
             self.end_state = 'threefold repetition'
             self.winner = 'draw'
-        elif self.halfmove_clock >= 100:
+        elif self.halfmove_clock >= HALFMOVE_LIMIT:
             self.is_end = True
             self.end_state = '50 move rule'
             self.winner = 'draw'
-                
+           
         return self
-       
+
+    # Check if there is sufficient material for checkmate
+    def sufficient_material(self):
+        pass
+
     def legal_moves(self, flag=None):
         if flag not in ['any', None]:
             raise ValueError('Invalid flag for legal_moves()')
@@ -400,18 +478,18 @@ class GameState:
         for square, piece in self.board.items():
             
             if piece.colour == self.turn:
-                search_squares = possible_destinations(piece, square, self.board)
+                search_squares = mr.possible_destinations(piece, square, self.board)
                     
                 # True if any moves exist
                 if search_squares and flag == 'any':
                     for dest in search_squares:
                         move = Move(square, dest, piece)
-                        if is_legal_move(move, self):
+                        if self.is_legal_move(move):
                             return True
                 elif search_squares: # Collect all legal moves
                     for dest in search_squares:
                         move = Move(square, dest, piece)
-                        if is_legal_move(move, self):
+                        if self.is_legal_move(move):
                             legal_moves.append(move)     
                             
         if flag == 'any':
@@ -454,275 +532,30 @@ def square_is_attacked(square : str, game : GameState | tuple[Board, str]) -> bo
     file, rank= [*square]
     
     # Check for pawns
-    pawn_attacks = find_pawn_attacks(file, rank, colour, False)
-    if find_attacker(pawn_attacks, ['p', 'B', 'Q', 'K'], board, opp_colour):
+    pawn_attacks = mr.find_pawn_attacks(file, rank, colour, False)
+    if mr.find_attacker(pawn_attacks, ['p', 'B', 'Q', 'K'], board, opp_colour):
         return True
     
     # Check for knights
-    knight_attacks = find_knight_attacks(file, rank)
-    if find_attacker(knight_attacks, ['N'], board, opp_colour):
+    knight_attacks = mr.find_knight_attacks(file, rank)
+    if mr.find_attacker(knight_attacks, ['N'], board, opp_colour):
         return True
     
     # Check for bishops and queens
-    diagonal_attacks = find_bishop_attacks(file, rank, board)
-    if find_attacker(diagonal_attacks, ['B', 'Q'], board, opp_colour):
+    diagonal_attacks = mr.find_bishop_attacks(file, rank, board)
+    if mr.find_attacker(diagonal_attacks, ['B', 'Q'], board, opp_colour):
         return True
     
     # Check for rooks and queens
-    orthog_attacks = find_rook_attacks(file, rank, board)
-    if find_attacker(orthog_attacks, ['R', 'Q'], board, opp_colour):
+    orthog_attacks = mr.find_rook_attacks(file, rank, board)
+    if mr.find_attacker(orthog_attacks, ['R', 'Q'], board, opp_colour):
         return True
     
     # Check for king 
-    king_attacks = find_king_attacks(file, rank)
-    if find_attacker(king_attacks, ['K'], board, opp_colour):
+    king_attacks = mr.find_king_attacks(file, rank)
+    if mr.find_attacker(king_attacks, ['K'], board, opp_colour):
         return True
     
-    return False
-
-def validate_move(move_data : dict, game : GameState, player : str):
-    board = game.board
-    move_notation, move_type, move_details = move_data.values()
-    
-    destination = None
-    is_capture = False
-    if 'destination' in move_details:
-        destination = move_details['destination']
-        dest_file, dest_rank = [*destination]
-        dest_rank = int(dest_rank)
-        is_capture = (destination == game.board.en_passant_target and move_type == 'pawn') or destination in board
-
-    
-    # Capture exists, not in syntax
-    if is_capture and 'capture' in move_details and move_details['capture'] is None: 
-        print('Invalid syntax: Capture not specified')
-        return None
-    # Capture does not exist, exists in syntax
-    elif not is_capture and 'capture' in move_details and move_details['capture'] is not None:
-        print('Invalid syntax: This move is not a capture')
-        return None
-        
-    match move_type:
-        case 'pawn':
-            '''Find pawn position'''
-            sign = 1 if player == 'white' else -1
-            
-            # Files only change when pawn captures
-            origin_file = move_details['origin'] if move_details['capture'] else dest_file
-            origin_rank = dest_rank - sign
-            double_rank = 4 if player == 'white' else 5
-            if dest_rank == double_rank:
-                potential_o_ranks = [dest_rank - 2 * sign, dest_rank - sign]
-                for o_rank in potential_o_ranks.copy():
-                    pos = f'{origin_file}{o_rank}'
-                    if pos not in board or board[pos] != Piece('p', player):
-                        potential_o_ranks.remove(o_rank)
-                
-                if len(potential_o_ranks) == 1:
-                    origin_rank = potential_o_ranks[0]
-                elif len(potential_o_ranks) == 2:
-                    # The pawn closest to double rank should move
-                    origin_rank =  min(potential_o_ranks, key = lambda r: abs(double_rank - r))
-                else:
-                    print(f'No {player} pawn that can move to {destination}.')
-                    return None
-            
-            # Found coordinates
-            pawn_origin = f'{origin_file}{origin_rank}'
-            pawn = game.board[pawn_origin]
-            is_double = (abs(origin_rank - dest_rank) == 2)
-            is_en_passant = (destination == game.board.en_passant_target)
-            
-            move = Move(pawn_origin, destination, pawn)
-            move.is_capture = is_en_passant or is_capture
-            if is_en_passant:
-                move.special = 'en passant'
-            
-            '''Check if pawn exists at location and move is legal'''
-            if pawn == Piece('p', player) and is_legal_move(move, game):
-                if is_double:
-                    game.board.en_passant_target = f'{dest_file}{dest_rank - sign}'
-                return move
-            else:
-                print(f'Cannot move pawn to {destination}')
-                return None
-            
-        case 'promotion':
-            '''Find pawn''' 
-            origin_rank = '7' if player == 'white' else '2'
-            origin_file = move_details['origin'] if move_details['capture'] else dest_file
-            pawn_origin = f'{origin_file}{origin_rank}'
-            pawn = game.board[pawn_origin]
-            
-            promote_type = move_details['promotion']
-            move = Move(pawn_origin, destination, pawn)
-            move.is_capture = is_capture
-            move.special, move.promote = 'promotion', promote_type
-            if pawn == Piece('p', player) and is_legal_move(move, game):
-                return move
-            else:
-                print(f'{move_notation} is not a legal move.')
-                return None
-            
-        case 'piece':
-            piece_type = move_details['piece'] 
-            piece_name = PIECE_NAMES[piece_type]
-            
-            origin_hint = move_details['origin'] # Sometimes None
-            piece = Piece(type = piece_type, colour = player)
-            
-            # Find origin square by tracing backwards
-            search_squares = possible_destinations(piece, destination, game.board, attacks_only=True)
-                
-            origin = set()
-            for square in search_squares:
-                if square in board and board[square] == piece:
-                    origin.add(square)
-            if not origin:
-                print(f'There is no {player} {piece_name} that can travel to {destination}')
-                return None
-                
-            conflict = len(origin) > 1
-            conflict_set = set()
-            if conflict:
-                if not origin_hint:
-                    print(f'There are multiple valid {piece_name}s which can move to {destination}.')
-                    return origin
-                
-                origin_resolved = set()
-                conflict_set = origin.copy() 
-
-                for square in conflict_set:
-                    if origin_hint in square:
-                        origin_resolved.add(square)
-
-                if not origin_resolved:
-                    print(f"{move_notation} is not a valid move.")
-                    return None
-                elif len(origin_resolved) > 1:
-                    print(f"Disambiguation insufficient, multiple {piece_name}s can move to {destination}")
-                    return origin_resolved
-                else: 
-                    origin = list(origin_resolved)[0]
-
-
-            else:
-                origin = list(origin)[0]
-            
-            move = Move(origin, destination, piece)
-
-            if not conflict:
-                move.disambiguation = None # Prevent unnecessary disambiguation
-
-            elif len(origin_hint) == 1: # 1 disambiguation character
-                move.disambiguation = origin_hint 
-                
-            else: # Only case of length 2 remains, else handled in parsing phase
-                hint_file, hint_rank = [*origin_hint]
-
-                shared_file = 0
-                shared_rank = 0
-                for square in conflict_set:
-                    file, rank = [*square]
-
-                    if file == hint_file:
-                        shared_file += 1
-                    if rank == hint_rank:
-                        shared_rank += 1
-
-                if shared_file == 1:
-                    # Only file disambiguation needed
-                    move.disambiguation = hint_file
-                elif shared_rank == 1:
-                    # Only rank disambiguation needed
-                    move.disambiguation = hint_rank
-                else:
-                    # Both file and rank disambiguation is necessary
-                    move.disambiguation = origin_hint 
-    
-            move.is_capture = is_capture
-            if is_legal_move(move, game):
-                return move
-                          
-        case 'castling':
-            # Castling only valid if king is on home square
-            origin = 'e1' if player == 'white' else 'e8'
-            king = game.board[origin]
-            file = 'g' if move_details['side'] == 'O-O' else 'c'
-            rank = origin[-1]
-            destination = f'{file}{rank}'
-            
-            move = Move(origin, destination, king)
-            move.special = 'castling'
-            if king == Piece(type='K', colour=player) and is_legal_move(move, game):
-                return move
-            else:
-                print(f'{move_notation} is not a legal move.')
-                return None
-    print(f'{move_notation} is not a legal move.')
-    return None
-
-def is_legal_move(move: Move, game : GameState) -> bool | list[Move]:
-    board = game.board
-    piece = game.board[move.origin]
-    king_pos = ''
-    if move.piece.type == 'K':
-        king_pos = move.destination
-    else:
-        king_pos = game.board.king_positions[piece.colour]
-        
-    king_is_safe = square_remains_safe(king_pos, move, game, piece.colour)
-    if not king_is_safe or is_friendly(move.destination, piece, board) or not piece == move.piece:
-        return False
-    opp_colour = opposite(move.piece.colour)
-    
-    if move.origin not in board or board[move.origin].colour != move.piece.colour:
-        return False
-    
-    # Initial position
-    init_file, init_rank = [*move.origin]
-    init_rank = int(init_rank)
-    init_findex = FILES.index(init_file)
-    
-    dest_file, dest_rank = [*move.destination]
-    dest_rank = int(dest_rank)
-    dest_findex = FILES.index(dest_file)
-    match piece.type:
-        case 'p':
-            rank_steps = dest_rank - init_rank
-            file_steps = dest_findex - init_findex
-            factor = 1 if piece.colour == 'white' else -1
-            
-            if abs(file_steps) > 1:
-                return False
-            elif abs(file_steps) == 1 and rank_steps == factor: # Pawn capture 
-                if move.destination in board:
-                    return board[move.destination].colour == opp_colour
-                else:
-                    return move.destination == game.board.en_passant_target
-            else:
-                return is_pawn_move(move.origin, move.destination, board, piece.colour)
-        case 'N': return is_knight_move(move.origin, move.destination)
-        case 'B': return is_bishop_move(move.origin, move.destination, board)
-        case 'R': return is_rook_move(move.origin, move.destination, board)
-        case 'Q': return is_bishop_move(move.origin, move.destination, board) or is_rook_move(move.origin, move.destination, board)
-        case 'K':        
-            '''Castling'''
-            if move.special == 'castling':
-                if can_castle_kingside(piece, game):
-                    target = f'g{init_rank}'
-                    if move.destination == target:
-                        return True
-                if can_castle_queenside(piece, game):
-                    target = f'c{init_rank}'
-                    if move.destination == target:
-                        return True
-            else:
-                v_comps = [abs(init_findex - dest_findex), abs(init_rank - dest_rank)] # Vector components
-                is_single_step = max(v_comps) == 1 and sum(v_comps) > 0
-                is_safe = square_remains_safe(move.destination, move, game, move.piece.colour)
-                if is_single_step and is_safe:
-                    return True
     return False
 
 def square_remains_safe(square: str, move: Move, game: GameState, colour: str):

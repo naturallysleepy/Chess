@@ -1,10 +1,13 @@
 import re
 
+# CMD_PATTERN =  r'(/.*|resign|q(?:uit)?|exit|[?]|help)'
 SAN_PATTERN = r'(?:[KQRBN]?(?: [a-h][1-8]|[a-h1-8])?x?[a-h][1-8](?:=[KQRBN])?|O-O(?:-O)?)[+#]?' # SAN: Standard Algebraic Notation
 PGN_PATTERN = rf'(\d+\.?\s?{SAN_PATTERN})(\s(?:\d+\.\.\.)?{SAN_PATTERN}\s?)?'
 FEN_PATTERN = r'(?:[rnbqkpRNBQKP1-8]{1,8}/){7}[rnbqkpRNBQKP1-8]{1,8} [wb] (?:[KQkq]{1, 4}|-) (?:[a-h][1-8]|-) \d+ \d+'
-CMD_PATTERN =  r'(/.*|resign|q(?:uit)?|exit|[?]|help)'
 FEN_INITIAL = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+
+class NotationError(Exception):
+    pass
 
 def parse_move(player_move, re_flags=0) -> list[dict] | dict: 
     # Finds and groups move data
@@ -27,7 +30,7 @@ def parse_move(player_move, re_flags=0) -> list[dict] | dict:
             matches.append(move_data)
             
     if not matches:     
-        raise ValueError('Invalid move')
+        raise NotationError('Invalid notation')
     if len(matches) > 1:
         return matches # Ambiguous case
     
@@ -91,10 +94,3 @@ def parse_initial_state(input: str):
         
     return fen, pgn  
     
-def move_or_command(player_input):
-    if re.fullmatch(CMD_PATTERN, player_input, re.I):
-        return 'cmd'
-    if re.fullmatch(SAN_PATTERN, player_input, re.I):
-        return 'move'
-    raise ValueError('Input is not a move or supported command')
-                

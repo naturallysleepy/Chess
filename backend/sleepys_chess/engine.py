@@ -1,15 +1,13 @@
 from __future__ import annotations
-from typing import Callable
+from typing import Callable, Any
 
-from .parsing import move_or_command
+from .parsing import NotationError
 from .gamerules import GameState, create_game
 from .utils import opposite, clear_screen, unabbreviate, is_colour
 from .board import Board
 
 import re
-
-class UserExit(Exception):
-    # Exit from anywhere in call stack
+class InvalidCommand(Exception):
     pass
 
 class ChessEngine:
@@ -51,8 +49,8 @@ class ChessEngine:
                 r'/(revert)': self.revert_undo,
                 r'/(flip(?: board)?)': self.flip_board,
                 r'/(set perspec(?:tive)?)\s*(b(?:lack)?|w(?:hite)?)?': self.set_perspec, 
+                r'/(details)': self.show_details,
                 r'/?([?]|help|(?:list )?(?:all )?commands)': self.commands_help
-                
             }
             
             for pattern, command in command_map.items():
@@ -66,7 +64,7 @@ class ChessEngine:
                     self.command_log.append((command_name, *params))
                     break       
             else:
-                self.message = f'The command "{command_str}" does not exist'           
+                raise InvalidCommand('Command is invalid')         
             return self
     
     def execute_undo(self, move_num: int | str | None=None, colour=None):
@@ -169,6 +167,24 @@ class ChessEngine:
         self.game.board.flip(self.game.turn)
         return self
 
+    def show_details(self):
+        # Debug info
+        details = ''
+        game_info = (self.command_log, self.game.position_history, 
+                    self.game.move_history)
+        for info in game_info:
+            items = None
+            if isinstance(info, dict):
+                items = info.items()
+            else: 
+                items = info
+            for i, entry in enumerate(items):
+                details += f'{i}: {entry}\n'
+            details += '\n' 
+        details += self.game.generate_pgn() 
+
+        self.message = details
+
     def commands_help(self):
         cmd_descs = {
             'view [n]th [colour] move from [side]' :
@@ -200,12 +216,20 @@ class ChessEngine:
             self.message += f'Description: {desc}\nUsage: {usage}\n\n'
         return self
         
-    def handle_user_input(self, input):
-        response_map = {
-            'cmd': self.process_command,
-            'move': self.game.process_player_move
-        }
-        response_map[move_or_command(input)](input)
+    # Returns true if move was played
+    def handle_user_input(self, input: str) -> bool:
+        if input.startswith('/'):
+            self.process_command(input)
+            return False
+        else:
+            try:
+                self.game.process_player_move(input)
+                return True 
+            except NotationError as ne:
+                print(ne)
+                self.process_command('/' + input)
+        return False
+                
         
     # TODO: Config compatibility
     def run(self, fen_or_pgn: str | None=None, config=None):
@@ -217,16 +241,17 @@ class ChessEngine:
                     print(self.game) 
                     self.view_target = self.game.fullmoves
                 self.is_viewing = False 
+                move_played = False
 
                 player_move = input('Make a move! ')
                 clear_screen()
-                loop_action = self.try_func(self.handle_user_input, player_move) # try-except the function
+                loop_action, move_played = self.try_func(self.handle_user_input, player_move) # try-except the function
                 if loop_action == 'break' or self.exit:
                     break
                 elif loop_action == 'continue':
                     continue
 
-                if move_or_command(player_move) == 'move':
+                if move_played:
                     self.update_clock()
                     self.game.check_if_end() 
 
@@ -244,7 +269,7 @@ class ChessEngine:
                 while True:
                     post_game = input('Type "/restart" to play again! Else type a command ')
                     clear_screen()
-                    loop_action = self.try_func(self.process_command, post_game)
+                    loop_action = self.try_func(self.process_command, post_game)[0]
                     if loop_action == 'break' or self.exit or not self.game.is_end:
                         break
                     elif loop_action == 'continue':
@@ -257,16 +282,16 @@ class ChessEngine:
         print('Thanks for playing!') # Bye bye
         return 
                 
-    def try_func(self, function: Callable[[str], None], user_input: str) -> str:
+    def try_func(self, function: Callable[[str], Any], user_input: str) -> tuple[str, Any]:
         try:
-            function(user_input)
+            return_val = function(user_input)
             if self.message:
                 print(self.message)
                 self.message = ''
         except KeyboardInterrupt:
             self.exit = True
-            return 'break'
+            return ('break', None)
         except Exception as e:
             print('Something went wrong: ', e)
-            return 'continue'
-        return ''
+            return ('continue', None)
+        return ('', return_val)
