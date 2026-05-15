@@ -34,3 +34,4 @@ instance/
 
 
 /backend/sleepys_chess/__pycache__
+*.pyc
