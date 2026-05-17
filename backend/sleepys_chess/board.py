@@ -10,7 +10,7 @@ RANKS = '12345678'
 class Board:
     def __init__(self):
         self.squares: dict[str, Piece] = {}
-        self.king_positions: dict[str: str] = {'white': 'e1', 'black': 'e8'}
+        self.king_positions: dict[str: str] = {'white': None, 'black': None}
         self.en_passant_target: str | None = None
         self.perspective: str | None = None
        

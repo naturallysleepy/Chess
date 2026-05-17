@@ -397,3 +397,34 @@ def possible_destinations(piece: Piece, square: str, board: Board, colour=None, 
                 search_squares += [f'g{rank}', f'c{rank}']
                 
     return search_squares
+
+def square_is_attacked(square : str, board: Board, colour: str) -> bool: # Do not pass attacking colour
+    opp_colour = opposite(colour)
+    file, rank= [*square]
+    
+    # Check for pawns
+    pawn_attacks = find_pawn_attacks(file, rank, colour, False)
+    if find_attacker(pawn_attacks, ['p', 'B', 'Q', 'K'], board, opp_colour):
+        return True
+    
+    # Check for knights
+    knight_attacks = find_knight_attacks(file, rank)
+    if find_attacker(knight_attacks, ['N'], board, opp_colour):
+        return True
+    
+    # Check for bishops and queens
+    diagonal_attacks = find_bishop_attacks(file, rank, board)
+    if find_attacker(diagonal_attacks, ['B', 'Q'], board, opp_colour):
+        return True
+    
+    # Check for rooks and queens
+    orthog_attacks = find_rook_attacks(file, rank, board)
+    if find_attacker(orthog_attacks, ['R', 'Q'], board, opp_colour):
+        return True
+    
+    # Check for king 
+    king_attacks = find_king_attacks(file, rank)
+    if find_attacker(king_attacks, ['K'], board, opp_colour):
+        return True
+    
+    return False

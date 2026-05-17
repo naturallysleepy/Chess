@@ -27,12 +27,12 @@ class IllegalState(Exception):
 class GameState:
     def __init__(self, fen=None, pgn=None):
         self.board = Board()
-        self.turn: str = 'white'
+        self.turn: str = None
         self.can_castle: dict[str, bool] = {
-            'white_kingside': True,
-            'white_queenside': True,
-            'black_kingside': True,
-            'black_queenside': True
+            'white_kingside': False,
+            'white_queenside': False,
+            'black_kingside': False,
+            'black_queenside': False
         }
         self.in_check: dict[str, bool] = {
             'white': False,
@@ -164,7 +164,7 @@ class GameState:
                 colour, side = key.split('_')
                 self.can_castle[f'{colour}_{side}'] = to_fen[colour](side[0]) in castling
                 king_pos = self.board.king_positions[colour]
-                self.in_check[colour] = square_is_attacked(king_pos, (self.board, colour))
+                self.in_check[colour] = mr.square_is_attacked(king_pos, self.board, colour)
                 
         if en_passant_target != '-':
             self.board.en_passant_target = en_passant_target
@@ -298,6 +298,7 @@ class GameState:
             self.process_player_move(other.move_history[dest_ply - 1][1]) # Move at dest
         else:
             raise IllegalState('Failed to load history')
+        
         self.ply = len(self.move_history)
         self.board.perspective = other.board.perspective
         
@@ -460,7 +461,44 @@ class GameState:
             self.winner = 'draw'
            
         return self
+    
+    def _state_errors(self) -> list[str]:
+        errors = []
 
+        # Turn exists
+        if not self.turn:
+            errors.append('Turn does not exist')
+        
+        # Halfmove count, fullmove count, ply >= 0
+        if any(count < 0 for count in [self.halfmove_clock, self.fullmoves, self.ply]):
+            errors.append('Count in halfmove clock, fullmove number or ply number is negative')
+        
+        # Only 1 king or 0 kings are in check
+        if all(in_check for in_check in self.in_check.values()):
+            errors.append('Multiple kings in check')
+
+        # Exactly 2 kings exist and are at their positions
+        kings = {'white': False, 'black': False}
+        for square, piece in self.board.squares.items():
+            if piece.type == 'K':
+                if kings[piece.colour]: # More than 1 king of this colour
+                    errors.append(f'Found more than one {piece.colour} king')
+                kings[piece.colour] = True
+
+                if square != (reported_square := self.board.king_positions[piece.colour]):
+                    errors.append(f'{piece.colour.capitalize()} king is at {square}. Board reports {reported_square}.')
+
+        return errors
+    
+    def is_legal_state(self):
+        return not self._state_errors
+
+    def assert_legal_state(self) -> None:
+        if (errors := self._state_errors()):
+            raise IllegalState('\n'.join(errors))
+        return None
+
+    # TODO
     # Check if there is sufficient material for checkmate
     def sufficient_material(self):
         pass
@@ -494,7 +532,7 @@ class GameState:
              
     def update_check(self):
         for colour, king_pos in self.board.king_positions.items():
-            self.in_check[colour] = square_is_attacked(king_pos, (self.board, colour))
+            self.in_check[colour] = mr.square_is_attacked(king_pos, self.board, colour)
         return self
 
     def get_start_move(self):
@@ -528,52 +566,13 @@ def create_game(input=None) -> GameState:
     return new_game
 
 def area_is_safe(squares, game : GameState):
-    return not any(square_is_attacked(square, game) for square in squares)
+    return not any(mr.square_is_attacked(square, game.board, game.turn) for square in squares)
 
 def area_is_empty(squares, game: GameState):
     return not any(square in game.board for square in squares)
 
-def square_is_attacked(square : str, game : GameState | tuple[Board, str]) -> bool: # Do not pass attacking colour
-    if isinstance(game, GameState):
-        board = game.board 
-        colour = game.turn
-    elif isinstance(game, tuple):
-        board, colour = game 
-    else:
-        raise ValueError(f'Invalid argument supplied to square_is_attacked(). \n{game} is not a valid type.') 
-    
-    opp_colour = opposite(colour)
-    file, rank= [*square]
-    
-    # Check for pawns
-    pawn_attacks = mr.find_pawn_attacks(file, rank, colour, False)
-    if mr.find_attacker(pawn_attacks, ['p', 'B', 'Q', 'K'], board, opp_colour):
-        return True
-    
-    # Check for knights
-    knight_attacks = mr.find_knight_attacks(file, rank)
-    if mr.find_attacker(knight_attacks, ['N'], board, opp_colour):
-        return True
-    
-    # Check for bishops and queens
-    diagonal_attacks = mr.find_bishop_attacks(file, rank, board)
-    if mr.find_attacker(diagonal_attacks, ['B', 'Q'], board, opp_colour):
-        return True
-    
-    # Check for rooks and queens
-    orthog_attacks = mr.find_rook_attacks(file, rank, board)
-    if mr.find_attacker(orthog_attacks, ['R', 'Q'], board, opp_colour):
-        return True
-    
-    # Check for king 
-    king_attacks = mr.find_king_attacks(file, rank)
-    if mr.find_attacker(king_attacks, ['K'], board, opp_colour):
-        return True
-    
-    return False
-
 def square_remains_safe(square: str, move: Move, game: GameState, colour: str):
-    return not square_is_attacked(square, (simulate_move(move, game).board, colour))
+    return not mr.square_is_attacked(square, simulate_move(move, game).board, colour)
 
 def simulate_move(move : Move, game : GameState):
     clone_game = copy.deepcopy(game)
