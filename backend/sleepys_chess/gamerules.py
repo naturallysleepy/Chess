@@ -21,6 +21,9 @@ class IllegalMove(Exception):
 class AmbiguityError(Exception):
     pass
 
+class IllegalState(Exception):
+    pass
+
 class GameState:
     def __init__(self, fen=None, pgn=None):
         self.board = Board()
@@ -38,11 +41,12 @@ class GameState:
         self.is_end: bool = False
         self.end_state: str | None = None
         self.winner: str | None = None
-        self.move_history: list[dict[str, Move]] = []
-        self.position_history: dict[int, str] = {}
+        self.move_history: list[tuple[str, Move]] = [] # Last index = ply - 1
+        self.position_history: dict[int, str] = {} # Ply-based
         self.position_count: dict[str, int] = {}
         self.halfmove_clock: int = 0
         self.fullmoves: int = 1 
+        self.ply: int = 0 
         
         if fen is None:
             self.load_fen(FEN_INITIAL) 
@@ -127,14 +131,17 @@ class GameState:
         if end_move:
             history_end = end_move - start_num
             
-        for i, moves in enumerate(self.move_history[history_start:history_end]):
-            pgn_string += f'{start_num + i}.'
-            if len(self.move_history[0]) == 1 and 'black' in self.move_history[0] and i == 1:
-                pgn_string += '..'
-            pgn_string += ' '
-             
-            for move_turn in moves.values():
-                pgn_string += f'{move_turn} '
+        fullmove_num = start_num
+        for colour, move in self.move_history[history_start:history_end]: 
+            if 'black' in self.move_history[0] and fullmove_num == start_num:
+                pgn_string += f'{fullmove_num}... '
+
+            if colour == 'white':
+                pgn_string += f'{fullmove_num}. '
+            else: 
+                fullmove_num += 1 
+            
+            pgn_string += f'{move} '
                  
         return pgn_string
     
@@ -167,6 +174,7 @@ class GameState:
         
         if is_start:
             self.position_history[0] = fen
+            self.position_count[fen[:-4]] = 1
         return self 
         
     def load_pgn(self, pgn: str):
@@ -214,7 +222,7 @@ class GameState:
             
             # Add checkmate marker
             if self.end_state == 'checkmate':
-                self.move_history[-1][self.winner].check_str = '#'
+                self.move_history[-1][1].check_str = '#'
         return self  
     
     def play_move(self, move: Move):
@@ -237,71 +245,62 @@ class GameState:
             
         return self
       
-    def undo(self, dest_move: int | None = None, colour: str | None = None):
-        first_move_num = self.get_start_move()
-
+    def go_to_move(self, dest_move: int , colour: str | None = None) -> tuple[GameState, GameState]:
+        if dest_move < 0:
+            dest_move += self.fullmoves
         if colour is None:
             colour = self.turn
-        if dest_move is None and colour == self.turn: 
-            dest_move = self.fullmoves - 1 # Go back a full move
-        elif dest_move is None: # colour != self.turn
-            dest_move = self.fullmoves # Will go back a halfmove
-        elif dest_move < 0:
-            dest_move = self.fullmoves + dest_move
-        is_restart = dest_move == 0
+
+        dest_ply = self.convert_to_ply(dest_move, colour)
+        is_restart = dest_ply == 0
         
-        if (dest_move < first_move_num and not is_restart) or dest_move > self.fullmoves:
+        if (dest_move < self.get_start_move() and not is_restart) or dest_move > self.fullmoves:
             raise ValueError(f'Cannot undo: move {dest_move} does not exist' )
-        elif dest_move == self.fullmoves and colour == self.turn:
-            return self, None # Do literally nothing
         
+        return self.go_to_ply(dest_ply)
+        
+    def go_to_ply(self, dest_ply: int) -> tuple[GameState, GameState]:
         snapshot = copy.deepcopy(self) # Snapshot is held for one full move for option to revert
         
         new_game = GameState(fen='')
-        if is_restart:
+        if dest_ply == 0:
             new_game.load_fen(self.position_history[0])
         else:
-            new_game.load_history(self, dest_move, colour)
+            new_game.load_from_history(self, dest_ply - 1)
         
-        if new_game.turn != colour: 
-            new_game.process_player_move(self.move_history[dest_move - first_move_num + 1][opposite(colour)])
         self = new_game
-        # print(f'Before: {snapshot} \n\nAfter: {self}')
-        return self, snapshot 
+        return self, snapshot
 
-    # TODO: FIX INDEX ISSUES
-    def load_history(self, other: GameState, dest_move: int, dest_colour: str):
-        start_move = other.get_start_move() 
-
-        if dest_move - 1 in other.position_history: # TODO: Else?
-            for mv_num, pos in other.position_history.items():
-                self.position_history[mv_num] = pos
-                only_pos = pos[:-4] # Remove halfmove and fullmove counts 
-                if only_pos in self.position_count:
-                    self.position_count[only_pos] += 1
-                else:
-                    self.position_count[only_pos] = 1
-                if mv_num == dest_move - 1:
-                    break
-            move_hist_end = dest_move - start_move - 1 # Move before dest
-            self.move_history = other.move_history[:move_hist_end] # End right before last move
-
-            # Prevent false black move history
-            if dest_colour == 'white':
-                last_move = other.move_history[move_hist_end]
-                self.move_history.append(last_move) # Both turns
+    # Load to ply AFTER move is made (turn after this ply)
+    def load_from_history(self, other: GameState, dest_ply: int):
+        if dest_ply < 0 or dest_ply > len(other.move_history):
+            raise ValueError(f'Cannot load history at ply {dest_ply}')
+        elif dest_ply == 0:
+            self.position_history[0] = other.position_history[0]
+            return self
+        
+        for ply_num, pos in other.position_history.items():
+            if ply_num > dest_ply:
+                break
+            self.position_history[ply_num] = pos
+            only_pos = pos[:-4] # Remove halfmove and fullmove counts 
+            if only_pos in self.position_count:
+                self.position_count[only_pos] += 1
             else:
-                last_turn = other.move_history[move_hist_end]['white']
-                self.move_history.append({'white': last_turn}) # Only white turn
+                self.position_count[only_pos] = 1
 
-            self.load_fen(other.position_history[dest_move - 1], False) # White's move before dest
-
-            '''!!!PROBLEM!!!'''
-            last_black_move = dest_move - start_move - 1 # We want dest_move -1 
-            self.process_player_move(other.move_history[last_black_move]['black']) 
-            if dest_colour == 'black':
-                self.process_player_move(other.move_history[dest_move - start_move]['white'])
-
+        if dest_ply in self.position_history:
+            self.move_history = other.move_history[:dest_ply] 
+            self.load_fen(self.position_history[dest_ply], False) # White's move at dest
+        elif dest_ply - 1 in self.position_history:
+            self.move_history = other.move_history[:dest_ply - 1] 
+            self.load_fen(self.position_history[dest_ply - 1], False)
+            self.process_player_move(other.move_history[dest_ply - 1][1]) # Move at dest
+        else:
+            raise IllegalState('Failed to load history')
+        self.ply = len(self.move_history)
+        self.board.perspective = other.board.perspective
+        
         return self
 
     def process_player_move(self, player_move: str | Move):
@@ -347,7 +346,7 @@ class GameState:
             elif len(validated) < 1: 
                 raise IllegalMove(f'{player_move} is not a legal move')
             else:
-                validated = list(validated)[0]
+                (validated,) = validated # Unpack value
         else:
             if not self.is_legal_move(validated):
                 raise IllegalMove(f'{player_move} is not a legal move')
@@ -368,16 +367,13 @@ class GameState:
         
         # Update self history
         snapshot = self.generate_fen()
+        self.move_history.append((last_turn, validated))
+        self.ply += 1
         if last_turn == 'black':
-            if self.move_history:
-                self.move_history[-1][last_turn] = validated # PGN analog
-            else:
-                self.move_history.append({last_turn: validated}) # If black is first move
             self.fullmoves += 1
         else: 
-            self.move_history.append({last_turn: validated}) # PGN analog
-            self.position_history[self.fullmoves] = snapshot # FEN analog, updates on whites move ONLY
-            
+            self.position_history[self.ply] = snapshot # Updates on whites move ONLY
+
         # Remove halfmove and fullmove counts to store positional data only
         snapshot_position = snapshot[:-4]
         if snapshot_position not in self.position_count:
@@ -387,7 +383,7 @@ class GameState:
         # Update check and last move notation
         self.update_check()
         if any(self.in_check.values()):
-            self.move_history[-1][last_turn].check_str = '+'
+            self.move_history[-1][1].check_str = '+'
                 
         return self  
   
@@ -395,7 +391,6 @@ class GameState:
         board = self.board
         piece = self.board[move.origin]
         king_pos = ''
-        opp_colour = opposite(move.piece.colour)
 
         if move.piece.type == 'K':
             king_pos = move.destination
@@ -506,6 +501,25 @@ class GameState:
         initial_state = self.position_history[0] # Initial FEN
         move_num = initial_state.split()[-1] # Split FEN string into fields, last field is fullmove num
         return int(move_num)
+    
+    def convert_to_ply(self, move_num: int, colour: str):
+        if move_num == 0:
+            return 0
+        first_move_num = self.get_start_move()
+        if not is_colour(colour):
+            raise ValueError('Invalid colour provided')
+        elif move_num < first_move_num or move_num > self.fullmoves:
+            raise ValueError('Invalid move num')
+
+        # Find dest ply
+        first_colour = self.move_history[0][0] # Colour of first move
+        moves_completed = move_num - self.get_start_move()
+        if colour == first_colour: 
+            '''2 * fullmoves in between and then black plays'''
+            return 2 * (moves_completed) + 1 
+        else:
+            '''Black has even plies''' 
+            return 2 * (moves_completed + 1)
 
 def create_game(input=None) -> GameState:
     fen, pgn = parse_initial_state(input)

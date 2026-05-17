@@ -43,6 +43,7 @@ class ChessEngine:
             command_map = {
                 r'/(view(?: move)?)\s*(-?\d+|back|forward|<|>)?\s*(b(?:lack)?|w(?:hite)?)?\s*(b(?:lack)?|w(?:hite)?)?': self.view_move, 
                 r'/(undo|back)\s*(-?\d+)?\s*(b(?:lack)?|w(?:hite)?)?': self.execute_undo,
+                r'/(go to)\s*(-?\d+)\s*(b(?:lack)?|w(?:hite)?)?':self.execute_go_to,
                 r'/?(resign|q(?:uit)?|give up)': self.resign,
                 r'/?(exit|close)': self.exit_game,
                 r'/(restart|reset)': self.restart,
@@ -65,14 +66,33 @@ class ChessEngine:
                     break       
             else:
                 raise InvalidCommand('Command is invalid')         
-            return self
-    
-    def execute_undo(self, move_num: int | str | None=None, colour=None):
+            return self 
+
+    def execute_go_to(self, move_num: int | str, colour: str | None=None):
         if isinstance(move_num, str):
             move_num = int(move_num)
 
         colour = unabbreviate(colour)
-        self.game, self.checkpoint = self.game.undo(move_num, colour)
+        self.game, self.checkpoint = self.game.go_to_move(move_num, colour)
+        return self
+
+    def execute_undo(self, move_num: int | str | None=None, colour=None):
+        if isinstance(move_num, str):
+            move_num = int(move_num)
+        if move_num is None and colour is None:
+            self.game, self.checkpoint = self.game.go_to_ply(self.game.ply)
+            return self # Take back last move
+        elif colour: # Only colour
+            move_num = -1
+        elif colour is None: # Only move num given
+            colour = self.game.turn
+
+        move_num = -1 * abs(move_num) # Makes go_to take steps backwards
+        if move_num == 0:
+            move_num = self.fullmoves 
+
+        colour = unabbreviate(colour)
+        self.game, self.checkpoint = self.game.go_to_move(move_num, colour)
         return self
         
     def exit_game(self):
@@ -88,7 +108,7 @@ class ChessEngine:
         return self
         
     def restart(self):
-        self.game, self.checkpoint = self.game.undo(0, 'white') # Analogous to restart
+        self.game, self.checkpoint = self.game.go_to_move(0, self.game.move_history[0][0]) # Analogous to restart
         return self
         
     def revert_undo(self):
@@ -105,8 +125,7 @@ class ChessEngine:
         
         params = (move_num, move_colour, perspective)
         if all(param is None for param in params):
-            last_move = self.game.move_history[-1]
-            move_colour = 'black' if len(last_move) == 1 else 'white'
+            move_colour = self.game.move_history[-1][0] # Last move's colour
 
         if move_num is None:
             move_num = self.game.fullmoves 
@@ -119,7 +138,7 @@ class ChessEngine:
                 move_num = int(move_num)
 
         if move_num < 0:
-            move_num = self.game.fullmoves + move_num 
+            move_num += self.game.fullmoves 
         if move_num < first_move:
             raise ValueError(f'Unable to go to move {move_num}, move cannot be less than {first_move}')
         if move_num > self.game.fullmoves:
@@ -140,12 +159,12 @@ class ChessEngine:
         else:
             # Make board at move num
             view_board = Board()
-            desired_fen = self.game.position_history[move_num]
+            desired_fen = self.game.position_history[self.game.convert_to_ply(move_num, 'white')]
             view_board.fen_to_board(desired_fen)
 
             # Position history is only updated per white move
             if move_colour == 'black':
-                black_move = self.game.move_history[move_num - first_move].get('black', None) # None is default value
+                black_move = self.game.move_history[self.game.convert_to_ply(move_num, 'black')]
                 if black_move:
                     view_board.make_move(black_move)
 
@@ -182,6 +201,7 @@ class ChessEngine:
                 details += f'{i}: {entry}\n'
             details += '\n' 
         details += self.game.generate_pgn() 
+        details += f'\nPly: {self.game.ply}'
 
         self.message = details
 
@@ -193,8 +213,11 @@ class ChessEngine:
             'flip the board to show the opposite colour\'s perspective' : 
             '"/flip"',
 
-            'undo [n]th [colour] move (n < 0 goes back n moves, n = 0 identical to restart)': 
-                '"/undo" or "/back" +(optional: [n: default=-1] [colour: default=current turn])',
+            'undo last [n] [colour] moves': 
+                '"/undo" or "/back" +(optional: [n: default=1] [colour: default=current turn])',
+
+            'go to [n]th [colour] move ()':
+            '',
                 
             'revert to game state prior to last undo': 
                 '"/revert"',
@@ -231,8 +254,7 @@ class ChessEngine:
         return False
                 
         
-    # TODO: Config compatibility
-    def run(self, fen_or_pgn: str | None=None, config=None):
+    def run(self, fen_or_pgn: str | None=None):
         self.game = create_game(fen_or_pgn)
         while not self.exit:  
             if not self.game.is_end:

@@ -124,15 +124,17 @@ def validate_move(move_data : dict, board: Board, player : str) -> Move | set[Mo
                     for square in origin_resolved:
                         move_candidate = Move(square, destination, piece)
                         move_candidate.is_capture = is_capture
-                        move.disambiguation = origin_hint # TODO: When is this unnecessary??
-                        possible_moves.add(move_candidate)
-                    return possible_moves
-                else: 
-                    origin = list(origin_resolved)[0]
+                    
+                        if conflict_set != origin_resolved: # Any elements were removed from conflict set
+                            move.disambiguation = origin_hint 
 
+                        possible_moves.add(move_candidate)
+                    return possible_moves # Not ambiguity error because move legality may remove candidates
+                else: 
+                    (origin,) = origin_resolved 
 
             else:
-                origin = list(origin)[0]
+                (origin,) = origin # Unpack set
             
             move = Move(origin, destination, piece)
 
